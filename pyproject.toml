@@ -7,7 +7,7 @@ requires-python = ">=3.14"
 dependencies = []
 
 [project.scripts]
-playsipps-moorepay = "playsipps.moorepay:main"
+sipps = "playsipps.moorepay:main"
 
 [dependency-groups]
 dev = [

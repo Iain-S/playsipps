@@ -30,12 +30,11 @@ uv run pytest
 
 ## Moorepay Automation
 
-Open Moorepay, complete login interactively, go directly to Pay Documents, go
-directly to the payslips documents tab, print the number of `View` buttons, and
-close the browser:
+Open Moorepay, complete login interactively, go directly to the payslips SPA,
+print the number of `View` buttons, and close the browser:
 
 ```sh
-uv run playsipps-moorepay
+uv run sipps
 ```
 
 The command uses a persistent browser profile at `.playwright/moorepay-profile`
@@ -44,11 +43,18 @@ so a successful login can be reused on later runs.
 Save the payslips page HTML after navigation:
 
 ```sh
-uv run playsipps-moorepay --save-html fixtures/moorepay/payslips.html
+uv run sipps --save-html fixtures/moorepay/payslips.html
 ```
 
 That saved HTML can be used to add fixture-backed selector tests without storing
 credentials or session cookies.
+
+By default, `sipps` waits up to 60 seconds for the payslip `View` buttons. If
+Moorepay is unusually slow, increase the timeout:
+
+```sh
+uv run sipps --timeout-ms 120000
+```
 
 Run linting:
 
