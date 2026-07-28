@@ -1,0 +1,34 @@
+[project]
+name = "playsipps"
+version = "0.1.0"
+description = "A Python project scaffold for playsipps."
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.136.9",
+    "pytest>=8.4.1",
+    "ruff>=0.12.5",
+    "ty>=0.0.1a16",
+]
+
+[build-system]
+requires = ["uv_build>=0.8.0,<0.9.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 88
+target-version = "py314"
+extend-exclude = [".uv-cache", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ty]
+environment = { python-version = "3.14" }
