@@ -3,6 +3,7 @@
 .ruff_cache/
 .pytest_cache/
 .hypothesis/
+.playwright/
 .ty/
 __pycache__/
 *.py[cod]
