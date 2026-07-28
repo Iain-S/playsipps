@@ -36,7 +36,9 @@ uv run pytest
 - Use Hypothesis for behavior that can be expressed as general properties.
 - Do not commit generated virtual environments, caches, or build artifacts.
 - Use test-driven development: write tests and confirm that they fail before getting them to pass and, if necessary, refactoring.
-- For comments, write WHY, not WHAT. Skip `// increment counter` above `i++`. 
+- For comments, write WHY, not WHAT. Skip `// increment counter` above `i++`.
+- Never import annotations from __future__, there is no need.
+- Type constants as Final.
 
 ## Logging
 
