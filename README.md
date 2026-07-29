@@ -1,6 +1,6 @@
 # playsipps
 
-Python project scaffold using `uv`, `pytest`, `hypothesis`, `ruff`, and `ty`.
+Download monthly pay slips from Moorepay and extract the data.
 
 ## Requirements
 
