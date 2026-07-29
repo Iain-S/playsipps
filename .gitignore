@@ -1,3 +1,5 @@
+# Custom
+.DS_Store
 .venv/
 .uv-cache/
 .ruff_cache/
@@ -13,6 +15,11 @@ dist/
 .coverage
 htmlcov/
 downloads/
+text/
+outputs/
+payslips.csv
+payslips.xlsx
+~$*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

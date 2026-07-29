@@ -451,6 +451,62 @@ def test_parse_args_accepts_all_options(tmp_path: Path) -> None:
     assert args.limit == 6
 
 
+def test_parse_args_accepts_short_options(tmp_path: Path) -> None:
+    profile_dir = tmp_path / "profile"
+    save_html_path = tmp_path / "page.html"
+
+    args = parse_args(
+        [
+            "-H",
+            "-p",
+            str(profile_dir),
+            "-s",
+            str(save_html_path),
+            "-k",
+            "-t",
+            "1234",
+            "-l",
+            "6",
+        ]
+    )
+
+    assert args.headless is True
+    assert args.profile_dir == profile_dir
+    assert args.save_html == save_html_path
+    assert args.skip_login_prompt is True
+    assert args.timeout_ms == 1234
+    assert args.limit == 6
+
+
+def test_run_headless_skips_login_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    page = FakePage()
+    context = FakeContext(page=page, pages=[page])
+    install_fake_playwright(monkeypatch, context)
+    prompts: list[str] = []
+
+    def fake_input(prompt: str) -> str:
+        prompts.append(prompt)
+        return ""
+
+    monkeypatch.setattr(builtins, "input", fake_input)
+
+    periods = run(
+        headless=True,
+        profile_dir=tmp_path / "profile",
+        save_html_path=None,
+        skip_login_prompt=False,
+        timeout_ms=0,
+        limit=None,
+    )
+
+    assert periods == []
+    assert prompts == []
+    assert context.closed is True
+
+
 @dataclass
 class FakeContext:
     page: FakePage
@@ -658,6 +714,7 @@ def test_payslip_period_for_view_index_opens_clicked_payslip_and_extracts_period
 @dataclass
 class FakePool:
     mapped: list[tuple[object, list[int]]] = field(default_factory=list)
+    imap_unordered_calls: list[tuple[object, list[int]]] = field(default_factory=list)
 
     def __enter__(self) -> FakePool:
         return self
@@ -674,6 +731,10 @@ class FakePool:
         self.mapped.append((function, indices))
         return ["2026 04", "2026 01", "2026 03"]
 
+    def imap_unordered(self, function: object, indices: list[int]) -> list[str]:
+        self.imap_unordered_calls.append((function, indices))
+        return ["2026 04", "2026 01", "2026 03"]
+
 
 def test_sorted_payslip_periods_maps_indices_and_sorts_results(
     monkeypatch: pytest.MonkeyPatch,
@@ -682,7 +743,26 @@ def test_sorted_payslip_periods_maps_indices_and_sorts_results(
     monkeypatch.setattr(moorepay, "Pool", lambda: pool)
 
     assert sorted_payslip_periods([2, 0, 1]) == ["2026 01", "2026 03", "2026 04"]
-    assert pool.mapped == [(payslip_period_for_view_index, [2, 0, 1])]
+    assert pool.imap_unordered_calls == [(payslip_period_for_view_index, [2, 0, 1])]
+
+
+def test_sorted_payslip_periods_reports_download_progress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pool = FakePool()
+    progressed: list[tuple[list[str], int]] = []
+    monkeypatch.setattr(moorepay, "Pool", lambda: pool)
+
+    def progress(periods: object, *, total: int) -> list[str]:
+        period_list = list(cast(list[str], periods))
+        progressed.append((period_list, total))
+        return period_list
+
+    assert sorted_payslip_periods(
+        [2, 0, 1],
+        progress=progress,
+    ) == ["2026 01", "2026 03", "2026 04"]
+    assert progressed == [(["2026 04", "2026 01", "2026 03"], 3)]
 
 
 def test_main_prints_sorted_periods(

@@ -4,10 +4,14 @@ version = "0.1.0"
 description = "A Python project scaffold for playsipps."
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "pypdf>=5.9.0",
+    "pypdfium2>=5.12.1",
+    "tqdm>=4.67.1",
+]
 
 [project.scripts]
-sipps = "playsipps.moorepay:main"
+sipps = "playsipps.cli:main"
 
 [dependency-groups]
 dev = [
