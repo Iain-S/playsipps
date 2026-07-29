@@ -1,13 +1,16 @@
 """Playwright automation for retrieving Moorepay payslips."""
 
 import argparse
+from multiprocessing import Pool
 from pathlib import Path
-from typing import Any, Final, Protocol, cast
+from typing import Final, Protocol, cast
 
 LOGIN_URL: Final = "https://app.moorepay.co.uk/Account/Login?Idp=THEALANTURINGINSTITUTE"
 PAYSLIPS_URL: Final = "https://app-spa.moorepay.co.uk/me/details/pay-details/payslips"
 DEFAULT_TIMEOUT_MS: Final = 60_000
+DEFAULT_WORKER_LIMIT: Final = 10
 POLL_INTERVAL_MS: Final = 500
+STORAGE_STATE_PATH: Final = Path(".playwright/moorepay-storage-state.json")
 ZERO_COUNT_DEBUG_HTML: Final = Path(".playwright/debug/payslips-zero-view-buttons.html")
 
 
@@ -32,6 +35,10 @@ class LocatorLike(Protocol):
         """Evaluate JavaScript over all matched elements."""
         ...
 
+    def text_content(self, **kwargs: object) -> str | None:
+        """Return the matched element text content."""
+        ...
+
 
 class FrameLocatorLike(Protocol):
     def locator(self, selector: str) -> LocatorLike:
@@ -40,7 +47,7 @@ class FrameLocatorLike(Protocol):
 
 
 class PageLike(Protocol):
-    def goto(self, url: str, **kwargs: Any) -> Any:
+    def goto(self, url: str, **kwargs: object) -> object:
         """Navigate the page to a URL."""
         ...
 
@@ -64,7 +71,7 @@ class PageLike(Protocol):
         """Return a locator by accessible role and optional name."""
         ...
 
-    def go_back(self) -> Any:
+    def go_back(self) -> object:
         """Navigate back in browser history."""
         ...
 
@@ -106,6 +113,19 @@ def count_payslip_view_buttons(page: PageLike) -> int:
     return iframe_payslip_view_buttons(page).count()
 
 
+def payslip_period_cell(page: PageLike) -> LocatorLike:
+    """Return the payslip detail table cell containing the Period value."""
+    return page.locator("tbody tr:nth-child(2) td:nth-child(5)")
+
+
+def extract_payslip_period(page: PageLike, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> str:
+    """Extract the Period value from the currently open payslip detail view."""
+    period = payslip_period_cell(page).text_content(timeout=timeout_ms)
+    if period is None:
+        raise RuntimeError("Could not find payslip period cell.")
+    return " ".join(period.split())
+
+
 def wait_for_payslip_view_buttons(
     page: PageLike,
     timeout_ms: int = DEFAULT_TIMEOUT_MS,
@@ -121,6 +141,31 @@ def wait_for_payslip_view_buttons(
             return 0
         page.wait_for_timeout(poll_interval_ms)
         elapsed_ms += poll_interval_ms
+
+
+def payslip_period_for_view_index(index: int) -> str:
+    """Open the nth payslip View button in a worker and return its Period."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context(storage_state=str(STORAGE_STATE_PATH))
+        page = cast(PageLike, context.new_page())
+
+        navigate_to_payslips(page)
+        wait_for_payslip_view_buttons(page)
+        payslip_view_buttons(page).nth(index).click()
+        period = extract_payslip_period(page)
+
+        context.close()
+        browser.close()
+        return period
+
+
+def sorted_payslip_periods(indices: list[int]) -> list[str]:
+    """Fetch payslip periods in parallel and return them sorted."""
+    with Pool() as pool:
+        return sorted(pool.map(payslip_period_for_view_index, indices))
 
 
 def view_each_payslip(page: PageLike) -> int:
@@ -147,8 +192,9 @@ def run(
     save_html_path: Path | None,
     skip_login_prompt: bool,
     timeout_ms: int,
-) -> int:
-    """Run the Moorepay browser flow and return the View button count."""
+    worker_limit: int,
+) -> list[str]:
+    """Run the Moorepay browser flow and return sorted payslip periods."""
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as playwright:
@@ -170,8 +216,13 @@ def run(
         if viewed == 0:
             save_html(page, ZERO_COUNT_DEBUG_HTML)
             print(f"Saved debug HTML to {ZERO_COUNT_DEBUG_HTML}")
+            context.close()
+            return []
+        STORAGE_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        context.storage_state(path=str(STORAGE_STATE_PATH))
         context.close()
-        return viewed
+
+    return sorted_payslip_periods(list(range(min(viewed, worker_limit))))
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -204,20 +255,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_TIMEOUT_MS,
         help="Milliseconds to wait for payslip View buttons.",
     )
+    parser.add_argument(
+        "--worker-limit",
+        type=int,
+        default=DEFAULT_WORKER_LIMIT,
+        help="Maximum number of payslips to submit to worker processes.",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> None:
     """Run the CLI using provided arguments or the process arguments."""
     args = parse_args(argv)
-    viewed = run(
+    periods = run(
         headless=args.headless,
         profile_dir=args.profile_dir,
         save_html_path=args.save_html,
         skip_login_prompt=args.skip_login_prompt,
         timeout_ms=args.timeout_ms,
+        worker_limit=args.worker_limit,
     )
-    print(f"Found {viewed} View button(s).")
+    for period in periods:
+        print(period)
 
 
 if __name__ == "__main__":
