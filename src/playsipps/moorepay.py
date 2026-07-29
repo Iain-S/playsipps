@@ -8,8 +8,8 @@ from typing import Final, Protocol, cast
 LOGIN_URL: Final = "https://app.moorepay.co.uk/Account/Login?Idp=THEALANTURINGINSTITUTE"
 PAYSLIPS_URL: Final = "https://app-spa.moorepay.co.uk/me/details/pay-details/payslips"
 DEFAULT_TIMEOUT_MS: Final = 60_000
-DEFAULT_WORKER_LIMIT: Final = 10
 POLL_INTERVAL_MS: Final = 500
+DOWNLOADS_DIR: Final = Path("downloads")
 STORAGE_STATE_PATH: Final = Path(".playwright/moorepay-storage-state.json")
 ZERO_COUNT_DEBUG_HTML: Final = Path(".playwright/debug/payslips-zero-view-buttons.html")
 
@@ -37,6 +37,37 @@ class LocatorLike(Protocol):
 
     def text_content(self, **kwargs: object) -> str | None:
         """Return the matched element text content."""
+        ...
+
+
+class DownloadLike(Protocol):
+    @property
+    def suggested_filename(self) -> str:
+        """Return the browser-suggested filename for the download."""
+        ...
+
+    def save_as(self, path: str | Path) -> None:
+        """Save the download to the given path."""
+        ...
+
+
+class DownloadInfoLike(Protocol):
+    @property
+    def value(self) -> DownloadLike:
+        """Return the completed download."""
+        ...
+
+    def __enter__(self) -> DownloadInfoLike:
+        """Enter the download expectation context."""
+        ...
+
+    def __exit__(
+        self,
+        exc_type: object,
+        exc_value: object,
+        traceback: object,
+    ) -> None:
+        """Exit the download expectation context."""
         ...
 
 
@@ -69,6 +100,10 @@ class PageLike(Protocol):
 
     def get_by_role(self, role: str, *, name: str | None = None) -> LocatorLike:
         """Return a locator by accessible role and optional name."""
+        ...
+
+    def expect_download(self) -> DownloadInfoLike:
+        """Return a context manager that waits for the next download."""
         ...
 
     def go_back(self) -> object:
@@ -118,12 +153,39 @@ def payslip_period_cell(page: PageLike) -> LocatorLike:
     return page.locator("tbody tr:nth-child(2) td:nth-child(5)")
 
 
+def payslip_download_button(page: PageLike) -> LocatorLike:
+    """Return the payslip detail table button in the Download column."""
+    return page.locator("tbody tr:nth-child(2) td:nth-child(6) button")
+
+
 def extract_payslip_period(page: PageLike, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> str:
     """Extract the Period value from the currently open payslip detail view."""
     period = payslip_period_cell(page).text_content(timeout=timeout_ms)
     if period is None:
         raise RuntimeError("Could not find payslip period cell.")
     return " ".join(period.split())
+
+
+def period_download_path(period: str, downloads_dir: Path | None = None) -> Path:
+    """Return the local PDF path for a payslip period."""
+    target_dir = DOWNLOADS_DIR if downloads_dir is None else downloads_dir
+    safe_period = "-".join(period.split())
+    return target_dir / f"{safe_period}.pdf"
+
+
+def download_payslip_pdf(
+    page: PageLike,
+    period: str,
+    downloads_dir: Path | None = None,
+) -> Path:
+    """Download the currently open payslip PDF and return its local path."""
+    target_dir = DOWNLOADS_DIR if downloads_dir is None else downloads_dir
+    target_dir.mkdir(parents=True, exist_ok=True)
+    destination = period_download_path(period, downloads_dir=target_dir)
+    with page.expect_download() as download_info:
+        payslip_download_button(page).click()
+    download_info.value.save_as(destination)
+    return destination
 
 
 def wait_for_payslip_view_buttons(
@@ -143,8 +205,15 @@ def wait_for_payslip_view_buttons(
         elapsed_ms += poll_interval_ms
 
 
+def view_indices(total: int, limit: int | None) -> list[int]:
+    """Return the payslip View indices to process."""
+    if limit is None:
+        return list(range(total))
+    return list(range(min(total, limit)))
+
+
 def payslip_period_for_view_index(index: int) -> str:
-    """Open the nth payslip View button in a worker and return its Period."""
+    """Open the nth payslip, download its PDF, and return its Period."""
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as playwright:
@@ -156,6 +225,7 @@ def payslip_period_for_view_index(index: int) -> str:
         wait_for_payslip_view_buttons(page)
         payslip_view_buttons(page).nth(index).click()
         period = extract_payslip_period(page)
+        download_payslip_pdf(page, period)
 
         context.close()
         browser.close()
@@ -192,7 +262,7 @@ def run(
     save_html_path: Path | None,
     skip_login_prompt: bool,
     timeout_ms: int,
-    worker_limit: int,
+    limit: int | None,
 ) -> list[str]:
     """Run the Moorepay browser flow and return sorted payslip periods."""
     from playwright.sync_api import sync_playwright
@@ -222,7 +292,7 @@ def run(
         context.storage_state(path=str(STORAGE_STATE_PATH))
         context.close()
 
-    return sorted_payslip_periods(list(range(min(viewed, worker_limit))))
+    return sorted_payslip_periods(view_indices(viewed, limit))
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -256,9 +326,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Milliseconds to wait for payslip View buttons.",
     )
     parser.add_argument(
-        "--worker-limit",
+        "--limit",
         type=int,
-        default=DEFAULT_WORKER_LIMIT,
         help="Maximum number of payslips to submit to worker processes.",
     )
     return parser.parse_args(argv)
@@ -273,7 +342,7 @@ def main(argv: list[str] | None = None) -> None:
         save_html_path=args.save_html,
         skip_login_prompt=args.skip_login_prompt,
         timeout_ms=args.timeout_ms,
-        worker_limit=args.worker_limit,
+        limit=args.limit,
     )
     for period in periods:
         print(period)
