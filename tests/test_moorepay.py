@@ -1,17 +1,27 @@
 from __future__ import annotations
 
+import builtins
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
+from pathlib import Path
 from typing import cast
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+import playsipps.moorepay as moorepay
 from playsipps.moorepay import (
+    DEFAULT_TIMEOUT_MS,
     count_payslip_view_buttons,
     iframe_payslip_view_buttons,
+    main,
     navigate_to_payslips,
+    open_login,
+    parse_args,
     payslip_view_buttons,
+    run,
+    save_html,
     view_each_payslip,
     wait_for_payslip_view_buttons,
 )
@@ -166,6 +176,16 @@ def test_navigate_to_payslips_opens_direct_spa_url() -> None:
     assert page.timeouts == []
 
 
+def test_open_login_opens_idp_login_url() -> None:
+    page = FakePage()
+
+    open_login(page)
+
+    assert page.gotos == [
+        "https://app.moorepay.co.uk/Account/Login?Idp=THEALANTURINGINSTITUTE"
+    ]
+
+
 @given(st.integers(min_value=1, max_value=20))
 def test_count_payslip_view_buttons_returns_view_button_count(view_count: int) -> None:
     page = FakePage(view_count=view_count)
@@ -265,6 +285,15 @@ def test_moorepay_view_button_html_matches_expected_accessible_control() -> None
     assert parser.buttons[0].text == "View"
 
 
+def test_save_html_writes_current_page_content(tmp_path: Path) -> None:
+    page = FakePage()
+    path = tmp_path / "nested" / "page.html"
+
+    save_html(page, path)
+
+    assert path.read_text(encoding="utf-8") == "<html></html>"
+
+
 @given(st.integers(min_value=0, max_value=5))
 def test_view_each_payslip_clicks_each_view_when_hrefs_are_unavailable(
     view_count: int,
@@ -278,3 +307,211 @@ def test_view_each_payslip_clicks_each_view_when_hrefs_are_unavailable(
     assert page.clicks == [
         ("css", "button:has-text('View')", index) for index in range(view_count)
     ]
+
+
+def test_parse_args_uses_cli_defaults() -> None:
+    args = parse_args([])
+
+    assert args.headless is False
+    assert args.profile_dir == Path(".playwright/moorepay-profile")
+    assert args.save_html is None
+    assert args.skip_login_prompt is False
+    assert args.timeout_ms == DEFAULT_TIMEOUT_MS
+
+
+def test_parse_args_accepts_all_options(tmp_path: Path) -> None:
+    profile_dir = tmp_path / "profile"
+    save_html_path = tmp_path / "page.html"
+
+    args = parse_args(
+        [
+            "--headless",
+            "--profile-dir",
+            str(profile_dir),
+            "--save-html",
+            str(save_html_path),
+            "--skip-login-prompt",
+            "--timeout-ms",
+            "1234",
+        ]
+    )
+
+    assert args.headless is True
+    assert args.profile_dir == profile_dir
+    assert args.save_html == save_html_path
+    assert args.skip_login_prompt is True
+    assert args.timeout_ms == 1234
+
+
+@dataclass
+class FakeContext:
+    page: FakePage
+    pages: list[FakePage]
+    closed: bool = False
+    new_page_called: bool = False
+
+    def new_page(self) -> FakePage:
+        self.new_page_called = True
+        return self.page
+
+    def close(self) -> None:
+        self.closed = True
+
+
+@dataclass
+class FakeChromium:
+    context: FakeContext
+    launch_args: dict[str, object] = field(default_factory=dict)
+
+    def launch_persistent_context(
+        self,
+        *,
+        user_data_dir: Path,
+        headless: bool,
+    ) -> FakeContext:
+        self.launch_args = {
+            "user_data_dir": user_data_dir,
+            "headless": headless,
+        }
+        return self.context
+
+
+@dataclass
+class FakePlaywright:
+    chromium: FakeChromium
+
+
+@dataclass
+class FakeSyncPlaywright:
+    playwright: FakePlaywright
+
+    def __enter__(self) -> FakePlaywright:
+        return self.playwright
+
+    def __exit__(
+        self,
+        exc_type: object,
+        exc_value: object,
+        traceback: object,
+    ) -> None:
+        return None
+
+
+def install_fake_playwright(
+    monkeypatch: pytest.MonkeyPatch,
+    context: FakeContext,
+) -> FakeChromium:
+    chromium = FakeChromium(context=context)
+    fake_sync_playwright = FakeSyncPlaywright(
+        playwright=FakePlaywright(chromium=chromium)
+    )
+
+    monkeypatch.setattr(
+        "playwright.sync_api.sync_playwright",
+        lambda: fake_sync_playwright,
+    )
+    return chromium
+
+
+def test_run_counts_buttons_with_existing_browser_page(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    page = FakePage(view_count=2)
+    context = FakeContext(page=page, pages=[page])
+    chromium = install_fake_playwright(monkeypatch, context)
+    save_html_path = tmp_path / "payslips.html"
+    profile_dir = tmp_path / "profile"
+
+    viewed = run(
+        headless=True,
+        profile_dir=profile_dir,
+        save_html_path=save_html_path,
+        skip_login_prompt=True,
+        timeout_ms=5_000,
+    )
+
+    assert viewed == 2
+    assert page.gotos == [
+        "https://app.moorepay.co.uk/Account/Login?Idp=THEALANTURINGINSTITUTE",
+        "https://app-spa.moorepay.co.uk/me/details/pay-details/payslips",
+    ]
+    assert save_html_path.read_text(encoding="utf-8") == "<html></html>"
+    assert context.closed is True
+    assert context.new_page_called is False
+    assert chromium.launch_args == {
+        "user_data_dir": profile_dir,
+        "headless": True,
+    }
+
+
+def test_run_prompts_creates_page_and_saves_debug_html_on_zero_count(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    page = FakePage()
+    context = FakeContext(page=page, pages=[])
+    install_fake_playwright(monkeypatch, context)
+    prompts: list[str] = []
+    debug_html_path = tmp_path / "debug.html"
+
+    def fake_input(prompt: str) -> str:
+        prompts.append(prompt)
+        return ""
+
+    monkeypatch.setattr(builtins, "input", fake_input)
+    monkeypatch.setattr(moorepay, "ZERO_COUNT_DEBUG_HTML", debug_html_path)
+
+    viewed = run(
+        headless=False,
+        profile_dir=tmp_path / "profile",
+        save_html_path=None,
+        skip_login_prompt=False,
+        timeout_ms=0,
+    )
+
+    assert viewed == 0
+    assert prompts == ["Complete login in the browser, then press Enter here: "]
+    assert context.closed is True
+    assert context.new_page_called is True
+    assert debug_html_path.read_text(encoding="utf-8") == "<html></html>"
+    assert f"Saved debug HTML to {debug_html_path}" in capsys.readouterr().out
+
+
+def test_main_prints_view_button_count(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    run_calls: list[dict[str, object]] = []
+
+    def fake_run(**kwargs: object) -> int:
+        run_calls.append(kwargs)
+        return 7
+
+    monkeypatch.setattr(moorepay, "run", fake_run)
+
+    main(
+        [
+            "--headless",
+            "--profile-dir",
+            str(tmp_path / "profile"),
+            "--save-html",
+            str(tmp_path / "page.html"),
+            "--skip-login-prompt",
+            "--timeout-ms",
+            "999",
+        ]
+    )
+
+    assert run_calls == [
+        {
+            "headless": True,
+            "profile_dir": tmp_path / "profile",
+            "save_html_path": tmp_path / "page.html",
+            "skip_login_prompt": True,
+            "timeout_ms": 999,
+        }
+    ]
+    assert capsys.readouterr().out == "Found 7 View button(s).\n"
