@@ -31,7 +31,8 @@ uv run pytest
 ## Moorepay Automation
 
 Open Moorepay, complete login interactively, go directly to the payslips SPA,
-print the number of `View` buttons, and close the browser:
+count the `View` buttons, process the first 10 payslips in parallel, and print
+the sorted Period values:
 
 ```sh
 uv run sipps
@@ -54,6 +55,13 @@ Moorepay is unusually slow, increase the timeout:
 
 ```sh
 uv run sipps --timeout-ms 120000
+```
+
+For testing, the CLI submits only the first 10 payslips to worker processes. To
+change that limit:
+
+```sh
+uv run sipps --worker-limit 5
 ```
 
 Run linting:

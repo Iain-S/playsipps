@@ -37,7 +37,7 @@ target-version = "py314"
 extend-exclude = [".uv-cache", ".venv"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+select = ["E", "F", "I", "UP", "B", "SIM", "ANN", "FURB", "RUF"]
 
 [tool.ty]
 environment = { python-version = "3.14" }
