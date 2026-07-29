@@ -25,7 +25,16 @@ uv run pytest
 - The live Moorepay flow is intentionally interactive; do not automate or store
   user credentials.
 - Use `.playwright/moorepay-profile` for local browser session state.
+- After login, navigate directly to
+  `https://app-spa.moorepay.co.uk/me/details/pay-details/payslips`.
+- Avoid `networkidle` waits for Moorepay pages; background requests can keep the
+  page from ever becoming idle.
+- Wait for `View` buttons by polling with a timeout rather than using a short
+  fixed sleep.
+- Count `button:has-text('View')` on the SPA page. If Moorepay redirects to the
+  wrapper app, fall back to `iframe#serviceProvider`.
 - Use saved HTML fixtures for selector tests where possible.
+- If the live count is zero, inspect `.playwright/debug/payslips-zero-view-buttons.html`.
 - Keep fixture HTML free of secrets, cookies, tokens, and personal data.
 
 ## Development Notes

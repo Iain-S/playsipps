@@ -13,6 +13,7 @@ sipps = "playsipps.moorepay:main"
 dev = [
     "hypothesis>=6.136.9",
     "playwright>=1.54.0",
+    "pytest-cov>=7.0.0",
     "pytest>=8.4.1",
     "ruff>=0.12.5",
     "ty>=0.0.1a16",
@@ -24,7 +25,11 @@ build-backend = "uv_build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+addopts = "-ra --cov=playsipps --cov-report=term-missing --cov-fail-under=100"
+
+[tool.coverage.run]
+branch = true
+source = ["playsipps"]
 
 [tool.ruff]
 line-length = 88
