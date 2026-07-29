@@ -11,21 +11,25 @@ from hypothesis import strategies as st
 import playsipps.moorepay as moorepay
 from playsipps.moorepay import (
     DEFAULT_TIMEOUT_MS,
-    DEFAULT_WORKER_LIMIT,
+    DOWNLOADS_DIR,
     count_payslip_view_buttons,
+    download_payslip_pdf,
     extract_payslip_period,
     iframe_payslip_view_buttons,
     main,
     navigate_to_payslips,
     open_login,
     parse_args,
+    payslip_download_button,
     payslip_period_cell,
     payslip_period_for_view_index,
     payslip_view_buttons,
+    period_download_path,
     run,
     save_html,
     sorted_payslip_periods,
     view_each_payslip,
+    view_indices,
     wait_for_payslip_view_buttons,
 )
 
@@ -84,6 +88,8 @@ class FakePage:
     selectors: list[str] = field(default_factory=list)
     frame_selectors: list[str] = field(default_factory=list)
     timeouts: list[float] = field(default_factory=list)
+    download_paths: list[Path] = field(default_factory=list)
+    expected_downloads: int = 0
 
     def goto(self, url: str, **kwargs: object) -> None:
         self.gotos.append(url)
@@ -115,6 +121,10 @@ class FakePage:
 
     def get_by_role(self, role: str, *, name: str | None = None) -> FakeLocator:
         return FakeLocator(page=self, role=role, name=name)
+
+    def expect_download(self) -> FakeDownloadInfo:
+        self.expected_downloads += 1
+        return FakeDownloadInfo(download=FakeDownload(page=self))
 
     def go_back(self) -> None:
         self.backs += 1
@@ -174,6 +184,35 @@ class FakeFrameLocator:
         )
 
 
+@dataclass
+class FakeDownload:
+    page: FakePage
+    suggested_filename: str = "suggested.pdf"
+
+    def save_as(self, path: str | Path) -> None:
+        self.page.download_paths.append(Path(path))
+
+
+@dataclass
+class FakeDownloadInfo:
+    download: FakeDownload
+
+    @property
+    def value(self) -> FakeDownload:
+        return self.download
+
+    def __enter__(self) -> FakeDownloadInfo:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: object,
+        exc_value: object,
+        traceback: object,
+    ) -> None:
+        return None
+
+
 def test_navigate_to_payslips_opens_direct_spa_url() -> None:
     page = FakePage()
 
@@ -205,6 +244,14 @@ def test_payslip_period_cell_targets_fifth_cell_of_second_row() -> None:
     assert locator.name == "tbody tr:nth-child(2) td:nth-child(5)"
 
 
+def test_payslip_download_button_targets_sixth_cell_button() -> None:
+    page = FakePage()
+
+    locator = cast(FakeLocator, payslip_download_button(page))
+
+    assert locator.name == "tbody tr:nth-child(2) td:nth-child(6) button"
+
+
 def test_extract_payslip_period_returns_normalized_period() -> None:
     page = FakePage(period_text=" 2026   04\n")
 
@@ -216,6 +263,23 @@ def test_extract_payslip_period_raises_when_period_cell_is_missing() -> None:
 
     with pytest.raises(RuntimeError, match="Could not find payslip period cell"):
         extract_payslip_period(page)
+
+
+def test_period_download_path_uses_period_as_pdf_filename() -> None:
+    assert period_download_path("2026 04") == DOWNLOADS_DIR / "2026-04.pdf"
+
+
+def test_download_payslip_pdf_saves_download_to_downloads_dir(tmp_path: Path) -> None:
+    page = FakePage()
+
+    path = download_payslip_pdf(page, "2026 04", downloads_dir=tmp_path)
+
+    assert path == tmp_path / "2026-04.pdf"
+    assert page.expected_downloads == 1
+    assert page.clicks == [
+        ("css", "tbody tr:nth-child(2) td:nth-child(6) button", None)
+    ]
+    assert page.download_paths == [tmp_path / "2026-04.pdf"]
 
 
 @given(st.integers(min_value=1, max_value=20))
@@ -272,6 +336,14 @@ def test_wait_for_payslip_view_buttons_returns_zero_after_timeout() -> None:
         == 0
     )
     assert page.timeouts == [500, 500]
+
+
+def test_view_indices_returns_all_indices_without_limit() -> None:
+    assert view_indices(4, None) == [0, 1, 2, 3]
+
+
+def test_view_indices_caps_indices_with_limit() -> None:
+    assert view_indices(4, 2) == [0, 1]
 
 
 @given(st.integers(min_value=1, max_value=20))
@@ -349,7 +421,7 @@ def test_parse_args_uses_cli_defaults() -> None:
     assert args.save_html is None
     assert args.skip_login_prompt is False
     assert args.timeout_ms == DEFAULT_TIMEOUT_MS
-    assert args.worker_limit == DEFAULT_WORKER_LIMIT
+    assert args.limit is None
 
 
 def test_parse_args_accepts_all_options(tmp_path: Path) -> None:
@@ -366,7 +438,7 @@ def test_parse_args_accepts_all_options(tmp_path: Path) -> None:
             "--skip-login-prompt",
             "--timeout-ms",
             "1234",
-            "--worker-limit",
+            "--limit",
             "6",
         ]
     )
@@ -376,7 +448,7 @@ def test_parse_args_accepts_all_options(tmp_path: Path) -> None:
     assert args.save_html == save_html_path
     assert args.skip_login_prompt is True
     assert args.timeout_ms == 1234
-    assert args.worker_limit == 6
+    assert args.limit == 6
 
 
 @dataclass
@@ -475,7 +547,7 @@ def install_fake_playwright(
     return chromium
 
 
-def test_run_fetches_first_ten_periods_with_existing_browser_page(
+def test_run_fetches_all_periods_by_default_with_existing_browser_page(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -499,11 +571,11 @@ def test_run_fetches_first_ten_periods_with_existing_browser_page(
         save_html_path=save_html_path,
         skip_login_prompt=True,
         timeout_ms=5_000,
-        worker_limit=10,
+        limit=None,
     )
 
     assert periods == ["2026 01", "2026 02"]
-    assert sorted_period_calls == [list(range(10))]
+    assert sorted_period_calls == [list(range(12))]
     assert page.gotos == [
         "https://app.moorepay.co.uk/Account/Login?Idp=THEALANTURINGINSTITUTE",
         "https://app-spa.moorepay.co.uk/me/details/pay-details/payslips",
@@ -542,7 +614,7 @@ def test_run_prompts_creates_page_and_saves_debug_html_on_zero_count(
         save_html_path=None,
         skip_login_prompt=False,
         timeout_ms=0,
-        worker_limit=10,
+        limit=None,
     )
 
     assert periods == []
@@ -563,6 +635,7 @@ def test_payslip_period_for_view_index_opens_clicked_payslip_and_extracts_period
     chromium = install_fake_playwright(monkeypatch, context)
     chromium.browser = browser
     monkeypatch.setattr(moorepay, "STORAGE_STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(moorepay, "DOWNLOADS_DIR", tmp_path / "downloads")
 
     period = payslip_period_for_view_index(2)
 
@@ -570,7 +643,12 @@ def test_payslip_period_for_view_index_opens_clicked_payslip_and_extracts_period
     assert page.gotos == [
         "https://app-spa.moorepay.co.uk/me/details/pay-details/payslips"
     ]
-    assert page.clicks == [("css", "button:has-text('View')", 2)]
+    assert page.clicks == [
+        ("css", "button:has-text('View')", 2),
+        ("css", "tbody tr:nth-child(2) td:nth-child(6) button", None),
+    ]
+    assert page.download_paths == [tmp_path / "downloads" / "2026-04.pdf"]
+    assert page.expected_downloads == 1
     assert browser.new_context_args == {"storage_state": str(tmp_path / "state.json")}
     assert chromium.browser_launch_args == {"headless": True}
     assert context.closed is True
@@ -630,7 +708,7 @@ def test_main_prints_sorted_periods(
             "--skip-login-prompt",
             "--timeout-ms",
             "999",
-            "--worker-limit",
+            "--limit",
             "8",
         ]
     )
@@ -642,7 +720,7 @@ def test_main_prints_sorted_periods(
             "save_html_path": tmp_path / "page.html",
             "skip_login_prompt": True,
             "timeout_ms": 999,
-            "worker_limit": 8,
+            "limit": 8,
         }
     ]
     assert capsys.readouterr().out == "2026 01\n2026 04\n"
