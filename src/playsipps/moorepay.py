@@ -1,9 +1,12 @@
 """Playwright automation for retrieving Moorepay payslips."""
 
 import argparse
+from collections.abc import Iterable
 from multiprocessing import Pool
 from pathlib import Path
 from typing import Final, Protocol, cast
+
+from tqdm import tqdm
 
 LOGIN_URL: Final = "https://app.moorepay.co.uk/Account/Login?Idp=THEALANTURINGINSTITUTE"
 PAYSLIPS_URL: Final = "https://app-spa.moorepay.co.uk/me/details/pay-details/payslips"
@@ -112,6 +115,12 @@ class PageLike(Protocol):
 
     def content(self) -> str:
         """Return the current page HTML."""
+        ...
+
+
+class DownloadProgress(Protocol):
+    def __call__(self, periods: Iterable[str], *, total: int) -> Iterable[str]:
+        """Show progress while payslip download periods are produced."""
         ...
 
 
@@ -232,10 +241,21 @@ def payslip_period_for_view_index(index: int) -> str:
         return period
 
 
-def sorted_payslip_periods(indices: list[int]) -> list[str]:
+def sorted_payslip_periods(
+    indices: list[int],
+    *,
+    progress: DownloadProgress | None = None,
+) -> list[str]:
     """Fetch payslip periods in parallel and return them sorted."""
+    progress_reporter = tqdm_downloads if progress is None else progress
     with Pool() as pool:
-        return sorted(pool.map(payslip_period_for_view_index, indices))
+        periods = pool.imap_unordered(payslip_period_for_view_index, indices)
+        return sorted(progress_reporter(periods, total=len(indices)))
+
+
+def tqdm_downloads(periods: Iterable[str], *, total: int) -> Iterable[str]:
+    """Show payslip download progress on stderr."""
+    return tqdm(periods, total=total, desc="Downloading payslips", unit="pdf")
 
 
 def view_each_payslip(page: PageLike) -> int:
@@ -275,7 +295,10 @@ def run(
         page = cast(PageLike, context.pages[0] if context.pages else context.new_page())
 
         open_login(page)
-        if not skip_login_prompt:
+        if not effective_skip_login_prompt(
+            headless=headless,
+            skip_login_prompt=skip_login_prompt,
+        ):
             input("Complete login in the browser, then press Enter here: ")
 
         navigate_to_payslips(page)
@@ -295,42 +318,58 @@ def run(
     return sorted_payslip_periods(view_indices(viewed, limit))
 
 
+def effective_skip_login_prompt(*, headless: bool, skip_login_prompt: bool) -> bool:
+    """Return whether the login prompt should be skipped."""
+    return headless or skip_login_prompt
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments for the Moorepay automation CLI."""
     parser = argparse.ArgumentParser(description=__doc__)
+    add_download_arguments(parser)
+    return parser.parse_args(argv)
+
+
+def add_download_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add Moorepay download arguments to an argparse parser."""
     parser.add_argument(
+        "-H",
         "--headless",
         action="store_true",
         help="Run without showing a browser window.",
     )
     parser.add_argument(
+        "-p",
         "--profile-dir",
         type=Path,
         default=Path(".playwright/moorepay-profile"),
         help="Persistent Playwright profile directory for Moorepay login state.",
     )
     parser.add_argument(
+        "-s",
         "--save-html",
         type=Path,
         help="Save the payslips page HTML after navigation.",
     )
     parser.add_argument(
+        "-k",
         "--skip-login-prompt",
         action="store_true",
         help="Do not pause for manual login before navigating.",
     )
     parser.add_argument(
+        "-t",
         "--timeout-ms",
         type=int,
         default=DEFAULT_TIMEOUT_MS,
         help="Milliseconds to wait for payslip View buttons.",
     )
     parser.add_argument(
+        "-l",
         "--limit",
         type=int,
         help="Maximum number of payslips to submit to worker processes.",
     )
-    return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -340,7 +379,10 @@ def main(argv: list[str] | None = None) -> None:
         headless=args.headless,
         profile_dir=args.profile_dir,
         save_html_path=args.save_html,
-        skip_login_prompt=args.skip_login_prompt,
+        skip_login_prompt=effective_skip_login_prompt(
+            headless=args.headless,
+            skip_login_prompt=args.skip_login_prompt,
+        ),
         timeout_ms=args.timeout_ms,
         limit=args.limit,
     )

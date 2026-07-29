@@ -1,0 +1,18 @@
+Pay Item
+Pay Item Units Rate This Period Year To Date
+SALARY 1234.56 2469.12
+PAYMENT TOTAL 1234.56 2469.12
+Deduction Item
+Deduction Item This Period Year To Date
+TAX 234.00 468.00
+N.L. 0.56 1.12
+EMPLOYEE PEN CON 100.00 200.00
+DEDUCTION TOTAL 334.56 669.12
+Pay Method NET PAY
+BANK 900.00
+Other Information
+Other Information This Period Year To Date
+Employers Pens 200.00 400.00
+Messages
+P60s are available on the Moorepay portal
+
