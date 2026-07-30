@@ -14,6 +14,7 @@ from playsipps.extract import (
     CSV_FIELDNAMES,
     SPREADSHEET_FIELDNAMES,
     PayslipFields,
+    calendar_month,
     dump_pdf_texts,
     extract_payslips,
     ocr_pdf_text,
@@ -68,7 +69,7 @@ def test_parse_payslip_text_extracts_known_fields() -> None:
     fields = parse_payslip_text(Path("downloads/2026-04.pdf"), text)
 
     assert fields == PayslipFields(
-        yyyy_mm="2026-04",
+        payroll_period="2026-04",
         gross_salary=Decimal("5000.00"),
         tax_deducted=Decimal("1000.00"),
         ni_deducted=Decimal("250.50"),
@@ -88,7 +89,7 @@ def test_parse_payslip_text_ignores_tax_code_and_ni_number() -> None:
 
     fields = parse_payslip_text(Path("downloads/2026-03.pdf"), text)
 
-    assert fields.yyyy_mm == "2026-03"
+    assert fields.payroll_period == "2026-03"
     assert fields.tax_deducted == Decimal("12.34")
     assert fields.ni_deducted == Decimal("9.87")
 
@@ -113,7 +114,7 @@ def test_parse_payslip_text_ignores_lines_before_pay_item_section() -> None:
 
     fields = parse_payslip_text(Path("downloads/2026-03.pdf"), text)
 
-    assert fields.yyyy_mm == "2026-03"
+    assert fields.payroll_period == "2026-03"
     assert fields.tax_deducted == Decimal("234.00")
     assert fields.ni_deducted == Decimal("0.56")
 
@@ -142,7 +143,7 @@ def test_parse_payslip_text_parses_synthetic_ocr_text() -> None:
     fields = parse_payslip_text(Path("downloads/2026-03.pdf"), text)
 
     assert fields == PayslipFields(
-        yyyy_mm="2026-03",
+        payroll_period="2026-03",
         gross_salary=Decimal("1234.56"),
         tax_deducted=Decimal("234.00"),
         ni_deducted=Decimal("12.34"),
@@ -175,10 +176,27 @@ def test_extract_payslips_reads_each_pdf_with_injected_reader(tmp_path: Path) ->
         text_reader=lambda path: f"Period {path.stem.replace('-', ' ')}\nNet Pay £2.00",
     )
 
-    assert [(row.yyyy_mm, row.net_salary) for row in rows] == [
+    assert [(row.payroll_period, row.net_salary) for row in rows] == [
         ("2026-01", Decimal("2.00")),
         ("2026-02", Decimal("2.00")),
     ]
+
+
+@pytest.mark.parametrize(
+    ("payroll_period", "expected"),
+    [
+        ("2026-01", "2026-04"),
+        ("2026-04", "2026-07"),
+        ("2026-09", "2026-12"),
+        ("2026-10", "2027-01"),
+        (None, None),
+    ],
+)
+def test_calendar_month_maps_uk_monthly_payroll_periods(
+    payroll_period: str | None,
+    expected: str | None,
+) -> None:
+    assert calendar_month(payroll_period) == expected
 
 
 def test_extract_payslips_reports_pdf_progress(tmp_path: Path) -> None:
@@ -292,7 +310,7 @@ def test_write_payslips_csv_writes_stable_headers_and_decimal_values(
     output = tmp_path / "nested" / "payslips.csv"
     rows = [
         PayslipFields(
-            yyyy_mm="2026-04",
+            payroll_period="2026-04",
             gross_salary=Decimal("5000.00"),
             tax_deducted=Decimal("1000.00"),
             ni_deducted=Decimal("250.50"),
@@ -306,7 +324,7 @@ def test_write_payslips_csv_writes_stable_headers_and_decimal_values(
 
     assert output.read_text(encoding="utf-8").splitlines() == [
         ",".join(CSV_FIELDNAMES),
-        "2026-04,5000.00,1000.00,250.50,,3449.50,600.00",
+        "2026-04,2026-07,5000.00,1000.00,250.50,,3449.50,600.00",
     ]
 
 
@@ -316,7 +334,7 @@ def test_write_payslips_xlsx_writes_data_and_validation_formulas(
     output = tmp_path / "nested" / "payslips.xlsx"
     rows = [
         PayslipFields(
-            yyyy_mm="2026-04",
+            payroll_period="2026-04",
             gross_salary=Decimal("5000.00"),
             tax_deducted=Decimal("1000.00"),
             ni_deducted=Decimal("250.50"),
@@ -341,11 +359,13 @@ def test_write_payslips_xlsx_writes_data_and_validation_formulas(
     for heading in SPREADSHEET_FIELDNAMES:
         assert f"<ns0:t>{heading}</ns0:t>" in worksheet
     assert '<ns0:c r="A2" t="inlineStr"><ns0:is><ns0:t>2026-04</ns0:t>' in worksheet
-    assert '<ns0:c r="B2"><ns0:v>5000.00</ns0:v></ns0:c>' in worksheet
+    assert '<ns0:c r="B2" t="inlineStr"><ns0:is><ns0:t>2026-07</ns0:t>' in worksheet
+    assert '<ns0:c r="C2"><ns0:v>5000.00</ns0:v></ns0:c>' in worksheet
     assert '<ns0:c r="A3" t="inlineStr"><ns0:is><ns0:t /></ns0:is></ns0:c>' in worksheet
-    assert "<ns0:f>SUM(C2:E2)</ns0:f>" in worksheet
-    assert "<ns0:f>B2-H2-F2</ns0:f>" in worksheet
-    assert "<ns0:f>ABS(I2)&lt;0.01</ns0:f>" in worksheet
+    assert '<ns0:c r="B3" t="inlineStr"><ns0:is><ns0:t /></ns0:is></ns0:c>' in worksheet
+    assert "<ns0:f>SUM(D2:F2)</ns0:f>" in worksheet
+    assert "<ns0:f>C2-I2-G2</ns0:f>" in worksheet
+    assert "<ns0:f>ABS(J2)&lt;0.01</ns0:f>" in worksheet
 
 
 def test_basic_ocr_text_matches_target_output_files(tmp_path: Path) -> None:

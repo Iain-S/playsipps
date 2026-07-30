@@ -32,7 +32,7 @@ uv run pytest
 
 Open Moorepay, complete login interactively, go directly to the payslips SPA,
 count the `View` buttons, process the payslips in parallel, download each PDF to
-`downloads/`, and print the sorted Period values:
+`downloads/`, and print the sorted payroll Period values:
 
 ```sh
 uv run sipps download
@@ -99,6 +99,16 @@ uv run sipps extract -d downloads -o payslips.csv -n
 ```
 
 Review and replace private details before committing any text fixtures.
+
+Downloaded PDF filenames use Moorepay's payroll/tax period, not the calendar
+month shown on the payslip. For example, `downloads/2026-04.pdf` is payroll
+period 4 of the 2026 tax year, which corresponds to a July 2026 payslip. In
+monthly UK payroll, period 1 is April, period 2 is May, and period 12 is March.
+
+The `payslips.csv` and `payslips.xlsx` files therefore distinguish:
+
+- `payroll period`: the Moorepay period used for downloaded PDF filenames.
+- `calendar month`: the payslip's calendar month.
 
 Run linting:
 
