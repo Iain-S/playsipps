@@ -131,9 +131,10 @@ def test_main_extract_subcommand_writes_csv(
     assert calls[0][2] is not None
     assert spreadsheet_calls == [(rows, spreadsheet)]
     assert output.read_text(encoding="utf-8").splitlines() == [
-        "yyyy-mm,gross salary,tax deducted,ni deducted,pension deducted,net salary,"
+        "payroll period,calendar month,gross salary,tax deducted,ni deducted,"
+        "pension deducted,net salary,"
         "employers pension",
-        ",,,,,,",
+        ",,,,,,,",
     ]
     assert capsys.readouterr().out == (
         f"Wrote 1 payslip row to {output} and {spreadsheet}\n"
@@ -195,13 +196,14 @@ def test_main_extract_subcommand_can_dump_text(
     assert calls[0][3] is not None
     assert len(spreadsheet_calls) == 1
     assert spreadsheet_calls[0][0] == [
-        PayslipFields(yyyy_mm="2026-04", net_salary=Decimal("2.00"))
+        PayslipFields(payroll_period="2026-04", net_salary=Decimal("2.00"))
     ]
     assert spreadsheet_calls[0][1] == spreadsheet
     assert output.read_text(encoding="utf-8").splitlines() == [
-        "yyyy-mm,gross salary,tax deducted,ni deducted,pension deducted,net salary,"
+        "payroll period,calendar month,gross salary,tax deducted,ni deducted,"
+        "pension deducted,net salary,"
         "employers pension",
-        "2026-04,,,,,2.00,",
+        "2026-04,2026-07,,,,,2.00,",
     ]
     assert capsys.readouterr().out == (
         f"Wrote 1 text file to {text_dir}\n"

@@ -16,7 +16,8 @@ DOWNLOADS_DIR: Final = Path("downloads")
 DEFAULT_CSV_PATH: Final = Path("payslips.csv")
 DEFAULT_SPREADSHEET_PATH: Final = Path("payslips.xlsx")
 CSV_FIELDNAMES: Final = (
-    "yyyy-mm",
+    "payroll period",
+    "calendar month",
     "gross salary",
     "tax deducted",
     "ni deducted",
@@ -42,7 +43,7 @@ RELATIONSHIPS_NS: Final = (
 
 @dataclass(frozen=True)
 class PayslipFields:
-    yyyy_mm: str | None = None
+    payroll_period: str | None = None
     gross_salary: Decimal | None = None
     tax_deducted: Decimal | None = None
     ni_deducted: Decimal | None = None
@@ -120,7 +121,7 @@ def parse_payslip_text(path: Path, text: str) -> PayslipFields:
     lines = [" ".join(line.split()) for line in text.splitlines() if line.split()]
     table_lines = _payslip_table_lines(lines)
     return PayslipFields(
-        yyyy_mm=path.stem,
+        payroll_period=path.stem,
         gross_salary=_money_field(
             table_lines,
             ("SALARY", "Gross Pay", "Total Gross Pay"),
@@ -196,7 +197,8 @@ def write_payslips_xlsx(rows: Iterable[PayslipFields], output_path: Path) -> Non
 
 def _csv_row(row: PayslipFields) -> dict[str, str]:
     return {
-        "yyyy-mm": _csv_value(row.yyyy_mm),
+        "payroll period": _csv_value(row.payroll_period),
+        "calendar month": _csv_value(calendar_month(row.payroll_period)),
         "gross salary": _csv_value(row.gross_salary),
         "tax deducted": _csv_value(row.tax_deducted),
         "ni deducted": _csv_value(row.ni_deducted),
@@ -210,6 +212,19 @@ def _csv_value(value: object) -> str:
     if value is None:
         return ""
     return str(value)
+
+
+def calendar_month(payroll_period: str | None) -> str | None:
+    """Return the calendar month for a UK monthly payroll period."""
+    if payroll_period is None:
+        return None
+    year_text, period_text = payroll_period.split("-", maxsplit=1)
+    year = int(year_text)
+    month = int(period_text) + 3
+    if month > 12:
+        year += 1
+        month -= 12
+    return f"{year:04d}-{month:02d}"
 
 
 def _worksheet_xml(rows: Iterable[PayslipFields]) -> str:
@@ -233,7 +248,13 @@ def _append_data_row(
     row_data: PayslipFields,
 ) -> None:
     row = SubElement(sheet_data, f"{{{SPREADSHEET_NS}}}row", {"r": str(row_number)})
-    _append_text_cell(row, 1, row_number, _csv_value(row_data.yyyy_mm))
+    _append_text_cell(row, 1, row_number, _csv_value(row_data.payroll_period))
+    _append_text_cell(
+        row,
+        2,
+        row_number,
+        _csv_value(calendar_month(row_data.payroll_period)),
+    )
     values = (
         row_data.gross_salary,
         row_data.tax_deducted,
@@ -242,16 +263,16 @@ def _append_data_row(
         row_data.net_salary,
         row_data.employers_pension,
     )
-    for column, value in enumerate(values, start=2):
+    for column, value in enumerate(values, start=3):
         _append_number_cell(row, column, row_number, value)
-    _append_formula_cell(row, 8, row_number, f"SUM(C{row_number}:E{row_number})")
+    _append_formula_cell(row, 9, row_number, f"SUM(D{row_number}:F{row_number})")
     _append_formula_cell(
         row,
-        9,
+        10,
         row_number,
-        f"B{row_number}-H{row_number}-F{row_number}",
+        f"C{row_number}-I{row_number}-G{row_number}",
     )
-    _append_formula_cell(row, 10, row_number, f"ABS(I{row_number})<0.01")
+    _append_formula_cell(row, 11, row_number, f"ABS(J{row_number})<0.01")
 
 
 def _append_text_cell(row: Element, column: int, row_number: int, value: str) -> None:
