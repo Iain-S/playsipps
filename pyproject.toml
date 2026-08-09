@@ -5,7 +5,7 @@ description = "A Python project scaffold for playsipps."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "pypdf>=5.9.0",
+    "pypdf>=6.15.0",
     "pypdfium2>=5.12.1",
     "tqdm>=4.67.1",
 ]
